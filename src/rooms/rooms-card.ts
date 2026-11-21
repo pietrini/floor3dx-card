@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { weatherKind } from '../daylight';
 import { THEMES, RoomsTheme, themeOf, stageOfCard, rgb } from './themes';
 import { Room, RoomEntity, RoomIndex, suggestRooms, floorCandidates, slug } from './rooms';
-import { Tiles, TilesHost, CSS_TILES, isOn, esc, domainOf, titleCase, icon, ACTIVE_DOMAINS, OFFABLE } from './tiles';
+import { Tiles, TilesHost, CSS_TILES, isOn, climateAction, esc, domainOf, titleCase, icon, ACTIVE_DOMAINS, OFFABLE } from './tiles';
 import { tokenRoles } from './references';
 import { lightIntensity } from '../render-mode';
 
@@ -23,6 +23,8 @@ const PREVIEW_HEIGHT = 'calc(100vh - 235px)';
 const EMBEDDED_TAG = 'floor3dpro-card'; // renamed to floor3dx-card by the build, like every element name
 const ALL = 'all';
 const READOUT_DOMAINS = new Set(['sensor', 'binary_sensor']);
+/** `hidden: yes` on a room entity: no tile or readout; it still feeds pin_info and the subtitle. */
+const userHidden = (e: any) => e?.hidden === true || /^(yes|true)$/i.test(String(e?.hidden ?? ''));
 /** The room and model last shown per card on this page: the card editor's preview makes a new element for
  *  every change, and the panel the user was looking at would close each time. */
 const RECENT = new Map<string, { room: string | null; active: string; at: number }>();
@@ -71,9 +73,10 @@ const STYLE = `
 .list .group{padding:8px 10px 2px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--f3r-muted)}
 .pins{position:absolute;inset:0;pointer-events:none;z-index:0}
 .pin{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;min-height:30px;min-width:30px;padding:0 6px;border-radius:15px;border:1px solid var(--f3r-line);background:var(--f3r-panel);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--f3r-muted);font-size:12px;font-weight:500;white-space:nowrap;pointer-events:auto;opacity:.92;transition:opacity .2s}
-.pin ha-icon{width:17px;height:17px;--mdc-icon-size:17px}.pin .pn{display:none;padding-right:2px}
+.pin ha-icon{display:flex;line-height:0;width:17px;height:17px;--mdc-icon-size:17px}.pin .pn{display:none;padding-right:2px}
 .pin .pt{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}.pin.info{padding-top:3px;padding-bottom:3px}.pin .pi{font-size:11px;font-weight:400;opacity:.85;padding-right:2px}
 .pin.on{color:rgb(var(--f3r-on));border-color:rgba(var(--f3r-on),.5)}
+.pin .pstate{display:flex;align-items:center;gap:1px;margin-left:-1px}.pin .ps{display:flex}.pin .ps ha-icon{width:15px;height:15px;--mdc-icon-size:15px}.pin .ps.light{color:rgb(var(--f3r-on))}.pin .ps.heating{color:rgb(255,87,34)}.pin .ps.cooling{color:rgb(41,182,246)}
 .pin[aria-pressed=true]{background:rgb(var(--f3r-accent));border-color:rgb(var(--f3r-accent));color:var(--f3r-on-accent,#fff);z-index:2}
 .pin[aria-pressed=true] .pn,.pin.hover .pn,:host(.labels) .pin .pn{display:inline}
 .pin[hidden]{display:none}
@@ -102,7 +105,7 @@ const STYLE = `
 .menu .dl[aria-pressed=false] .n{fill:currentColor}
 :host(.narrow.models) .list{top:104px;max-height:calc(100% - 126px)}
 @keyframes f3r-up{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
-.panelhead{flex:none;display:flex;gap:12px;align-items:flex-start;padding:14px 14px 10px}.panelhead .roomicon{margin-top:-9px}.panelhead .close{margin-top:-7px}.roomicon{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:rgba(var(--f3r-accent),.16);color:rgb(var(--f3r-accent))}
+.panelhead{flex:none;display:flex;gap:12px;align-items:flex-start;padding:14px 14px 10px}.panelhead .roomicon{margin-top:-9px}.panelhead .close{margin-top:-7px}.panelhead .close+.close{margin-left:-4px}.panelhead .close:disabled{opacity:.4;cursor:default}.roomicon{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:rgba(var(--f3r-accent),.16);color:rgb(var(--f3r-accent))}
 .panelhead h3{margin:0 0 2px;font-size:18px;font-weight:500}.panelhead p{margin:0;color:var(--f3r-muted);font-size:12px}.panelhead .grow{flex:1;min-width:0}
 .readouts.more{padding-top:0}.rule{flex:none;border:0;border-top:1px solid var(--f3r-line);margin:0 14px 8px}
 .readouts{flex:none;margin:0;padding:0 14px 10px;color:var(--f3r-ink);font-size:12px;display:flex;flex-wrap:wrap;gap:2px 0;line-height:1.5}.readouts em{font-style:normal;color:var(--f3r-muted)}.readouts span:before{content:"·";margin:0 6px 0 0;color:var(--f3r-muted)}.readouts span+span:before{margin:0 6px}.readouts .alert{color:rgb(var(--f3r-on))}.readouts span.ic:before{content:none;margin:0}.readouts span+span.ic{margin-left:8px}.readouts .ri{--mdc-icon-size:1.25em;width:1.25em;height:1.25em;display:inline-flex;align-items:center;vertical-align:-0.3em;margin-right:4px;color:var(--f3r-muted)}.readouts .alert .ri{color:inherit}
@@ -113,7 +116,6 @@ const STYLE = `
 :host(.narrow) .tiles{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 .tile.focus{box-shadow:0 0 0 2px rgb(var(--f3r-accent));transition:box-shadow .3s}
 ${CSS_TILES}
-.foot{flex:none;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:0 12px 12px}.quiet{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 12px;border:1px solid var(--f3r-line);border-radius:11px;background:transparent;color:var(--f3r-muted);font-size:12px}.quiet ha-icon{width:16px;height:16px;--mdc-icon-size:16px}
 .empty{padding:14px;color:var(--f3r-muted);font-size:13px;line-height:1.5}
 .toast{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);max-width:calc(100% - 32px);border:1px solid var(--f3r-line);border-radius:14px;background:var(--f3r-panel);-webkit-backdrop-filter:blur(var(--f3r-blur));backdrop-filter:blur(var(--f3r-blur));padding:10px 16px;font-size:13px}
 .hint{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:6px 12px;border-radius:12px;background:var(--f3r-panel);color:var(--f3r-muted);font-size:12px;pointer-events:none}
@@ -1188,6 +1190,16 @@ export class Floor3dxRoomsCard extends HTMLElement {
     if (v.includes('.')) return v;
     return (r.entities || []).map((e) => e.entity).find((id) => !isTemplate(id) && this._s(id)?.attributes?.device_class === v);
   }
+  /** pin_state: the room's state as icons on its pin - a bulb while a light is on, a flame while a
+   *  thermostat is heating, a snowflake while one is cooling; '' when none applies. */
+  private _pinState(r: Room): string {
+    const acts = new Set((r.entities || []).filter((e) => domainOf(e.entity) === 'climate').map((e) => climateAction(this._s(e.entity))));
+    const parts: string[] = [];
+    if (this._lightOn(r)) parts.push(`<span class="ps light" title="Light on">${icon('mdi:lightbulb')}</span>`);
+    if (acts.has('heating')) parts.push(`<span class="ps heating" title="Heating">${icon('mdi:fire')}</span>`);
+    if (acts.has('cooling')) parts.push(`<span class="ps cooling" title="Cooling">${icon('mdi:snowflake')}</span>`);
+    return parts.length ? `<span class="pstate">${parts.join('')}</span>` : '';
+  }
   private _pinInfo(r: Room): string {
     const v = this._pinSetting(r);
     if (!v) return '';
@@ -1304,7 +1316,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
     const span = (cls: string, e: any, body: string) => { const ic = iconOf(e); return `<span class="${[cls, ic ? 'ic' : ''].filter(Boolean).join(' ')}">${ic}${body}</span>`; };
     const narrow = this.classList.contains('narrow'), yes = (v: any) => v === true || String(v).toLowerCase() === 'yes' || String(v).toLowerCase() === 'true';
     for (const e of entities) {
-      if (!e || typeof e !== 'object' || this._tiles.hidden(e) || e.summary_only === true || e.summary_only === 'yes') continue;
+      if (!e || typeof e !== 'object' || this._tiles.hidden(e) || userHidden(e) || e.summary_only === true || e.summary_only === 'yes') continue;
       // hide_narrow (2.19.2): a readout left off a phone-width card
       if (yes(e.hide_narrow) && narrow) continue;
       if (e.text !== undefined && e.entity === undefined) {
@@ -1373,7 +1385,9 @@ export class Floor3dxRoomsCard extends HTMLElement {
     const showCount = c.pin_count !== false && String(c.pin_count ?? 'yes').toLowerCase() !== 'no';
     // pin_on: no - a room with something on keeps the plain pin colour
     const showOn = c.pin_on !== false && String(c.pin_on ?? 'yes').toLowerCase() !== 'no';
-    const pins = c.pins !== false && c.pins !== 'no' ? `<div class="pins">${rooms.filter((r) => (r.floors || []).length).map((r) => { const n = this._activeCount(r), info = this._pinInfo(r); return `<button class="pin ${n && showOn ? 'on' : ''} ${info ? 'info' : ''} ${r.id === this._hover ? 'hover' : ''}" hidden data-action="room" data-room="${esc(r.id)}" aria-pressed="${r.id === this._room}" aria-label="${esc(this._roomName(r))}${info ? `, ${esc(info)}` : ''}${n ? `, ${n} on` : ''}">${icon(r.icon || 'mdi:door-open')}<span class="pt"><span class="pn">${esc(this._roomName(r))}</span>${info ? `<span class="pi">${esc(info)}</span>` : ''}</span>${n && showCount ? `<span class="count" aria-hidden="true">${n}</span>` : ''}</button>`; }).join('')}</div>` : '';
+    // pin_state: yes - icons on the pin: a bulb while a light is on, a flame (snowflake) while a thermostat heats (cools)
+    const showState = c.pin_state === true || String(c.pin_state ?? '').toLowerCase() === 'yes';
+    const pins = c.pins !== false && c.pins !== 'no' ? `<div class="pins">${rooms.filter((r) => (r.floors || []).length).map((r) => { const n = this._activeCount(r), info = this._pinInfo(r); return `<button class="pin ${n && showOn ? 'on' : ''} ${info ? 'info' : ''} ${r.id === this._hover ? 'hover' : ''}" hidden data-action="room" data-room="${esc(r.id)}" aria-pressed="${r.id === this._room}" aria-label="${esc(this._roomName(r))}${info ? `, ${esc(info)}` : ''}${n ? `, ${n} on` : ''}${showState && /class="ps heating"/.test(this._pinState(r)) ? ', heating' : ''}">${icon(r.icon || 'mdi:door-open')}<span class="pt"><span class="pn">${esc(this._roomName(r))}</span>${info ? `<span class="pi">${esc(info)}</span>` : ''}</span>${showState ? this._pinState(r) : ''}${n && showCount ? `<span class="count" aria-hidden="true">${n}</span>` : ''}</button>`; }).join('')}</div>` : '';
     const panel = room ? this._panel(room) : '';
     if (!room) this._lastPanelRoom = null;
     this.classList.toggle('open', !!room);
@@ -1404,14 +1418,15 @@ export class Floor3dxRoomsCard extends HTMLElement {
   private _lastPanelRoom: string | null = null;
   private _panel(room: Room): string {
     const readouts = this._readouts(room);
-    const ents = (room.entities || []).filter((e) => !this._tiles.hidden(e) && !isTemplate(e.entity) && (this._sensorTiles() || !READOUT_DOMAINS.has(domainOf(e.entity))));
+    // `hidden: yes`: no tile or readout, but the entity still feeds pin_info and the subtitle
+    const ents = (room.entities || []).filter((e) => !this._tiles.hidden(e) && !userHidden(e) && !isTemplate(e.entity) && (this._sensorTiles() || !READOUT_DOMAINS.has(domainOf(e.entity))));
     const active = this._activeCount(room);
     const offable = ents.filter((e) => OFFABLE.includes(domainOf(e.entity)) && !e.read_only);
     const roomName = room.name || room.id;
     // the entrance animation plays when the panel opens, not on every re-render while it is open
     const still = this._lastPanelRoom === room.id; this._lastPanelRoom = room.id;
     const description = room.description ? this._text(room.description) : (this._summaryMode(room) === 'full' ? this._fullSummary(room, ents, !!readouts) : [active ? `${active} on` : ents.length ? 'Everything is off' : readouts ? 'Readings only' : 'Nothing to control here', ...this._security(room)].join(' · '));
-    return `<section class="panel${still ? ' still' : ''}" aria-label="${esc(this._roomName(room))}"><div class="panelhead"><div class="roomicon">${icon(room.icon || 'mdi:door-open')}</div><div class="grow"><h3>${esc(this._roomName(room))}</h3><p>${esc(description)}</p></div><button class="close" data-action="close" aria-label="Close">${icon('mdi:close')}</button></div><div class="body">${readouts}<div class="tiles">${ents.length ? ents.map((e) => this._tiles.tile(e, roomName)).join('') : readouts ? '' : '<div class="empty">No entities in this room. Add them in the card editor.</div>'}</div></div>${offable.length ? `<div class="foot"><button class="quiet" data-action="room-off" data-focus="room-off" ${offable.some((e) => isOn(this._s(e.entity))) ? '' : 'disabled'}>${icon('mdi:power')}All off in this room</button></div>` : ''}</section>`;
+    return `<section class="panel${still ? ' still' : ''}" aria-label="${esc(this._roomName(room))}"><div class="panelhead"><div class="roomicon">${icon(room.icon || 'mdi:door-open')}</div><div class="grow"><h3>${esc(this._roomName(room))}</h3><p>${esc(description)}</p></div>${offable.length ? `<button class="close off" data-action="room-off" data-focus="room-off" aria-label="All off in this room" title="All off in this room" ${offable.some((e) => isOn(this._s(e.entity))) ? '' : 'disabled'}>${icon('mdi:power')}</button>` : ''}<button class="close" data-action="close" aria-label="Close">${icon('mdi:close')}</button></div><div class="body">${readouts}<div class="tiles">${ents.length ? ents.map((e) => this._tiles.tile(e, roomName)).join('') : readouts ? '' : '<div class="empty">No entities in this room. Add them in the card editor.</div>'}</div></div></section>`;
   }
 
   // ---- actions ----------------------------------------------------------------------------

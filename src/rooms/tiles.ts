@@ -7,6 +7,12 @@ import { RoomEntity } from './rooms';
 
 const BAD = new Set(['unknown', 'unavailable', 'none', '']);
 export const available = (s: any) => !!s && !BAD.has(s.state);
+/** What a thermostat that is on is doing now: 'heating' or 'cooling' (from `hvac_action`), else ''. */
+export const climateAction = (s: any): string => {
+  const act = String(s?.attributes?.hvac_action || '');
+  return available(s) && s.state !== 'off' && (act === 'heating' || act === 'cooling') ? act : '';
+};
+const ACTION_ICONS: Record<string, string> = { heating: 'mdi:fire', cooling: 'mdi:snowflake' };
 export const isOn = (s: any) => available(s) && !['off', 'standby', 'idle', 'closed', 'locked', 'paused'].includes(s.state);
 export const esc = (v: any) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 export const domainOf = (id: string) => String(id || '').split('.')[0];
@@ -53,6 +59,7 @@ export const CSS_TILES = `
 .tile{border:1px solid var(--f3r-line);border-radius:14px;overflow:hidden;min-width:0;background:rgba(var(--f3r-stage),calc(var(--f3r-alpha) * .5));container-type:inline-size}.tile.on{border-color:rgba(var(--f3r-accent),.45);background:rgba(var(--f3r-accent),.1)}
 .row{display:flex;align-items:center;gap:10px;width:100%;min-height:60px;padding:10px 12px;border:0;background:transparent;text-align:left}
 .ticon{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:10px;background:rgba(127,127,127,.14);color:var(--f3r-muted)}.tile.on .ticon{color:rgb(var(--f3r-on));background:rgba(var(--f3r-on),.14)}
+.tile.heating{--f3r-act:255,87,34;border-color:rgba(var(--f3r-act),.6);background:rgba(var(--f3r-act),.14)}.tile.cooling{--f3r-act:41,182,246;border-color:rgba(var(--f3r-act),.6);background:rgba(var(--f3r-act),.14)}.tile.heating .ticon,.tile.cooling .ticon{color:rgb(var(--f3r-act));background:rgba(var(--f3r-act),.2)}.tile.heating .tstate,.tile.cooling .tstate{color:rgb(var(--f3r-act))}
 .ttext{flex:1;min-width:0}.tname{display:block;font-size:14px;font-weight:500;line-height:1.3;overflow-wrap:anywhere}.tstate{display:block;color:var(--f3r-muted);font-size:12px;margin-top:2px}.tstate.warn{color:#e57373}
 .sw{flex:none;width:28px;height:17px;border-radius:10px;background:rgba(127,127,127,.3);padding:3px}.sw:before{content:"";display:block;width:11px;height:11px;border-radius:50%;background:var(--f3r-ink)}.tile.on .sw{background:rgb(var(--f3r-accent))}.tile.on .sw:before{margin-left:11px;background:var(--f3r-on-accent,#fff)}
 .extra{padding:0 12px 10px}.ctl{margin-top:2px}.ctl-l{display:block;font-size:11px;color:var(--f3r-muted);margin:2px 0 -2px}
@@ -92,7 +99,9 @@ export class Tiles {
     const ic: any = e.icon;
     if (typeof ic === 'string' && /\{\{|\{%/.test(ic)) { const t = (this.host.template(ic) || '').trim(); if (/^[a-z][a-z0-9-]*:[a-z0-9-]+$/i.test(t)) return t; }
     else if (typeof ic === 'string' && ic.trim()) return ic.trim();
-    return this.s(e.entity)?.attributes?.icon || DEFAULT_ICONS[domainOf(e.entity)] || 'mdi:circle-outline';
+    const st = this.s(e.entity), act = domainOf(e.entity) === 'climate' ? climateAction(st) : '';
+    if (act) return ACTION_ICONS[act];
+    return st?.attributes?.icon || DEFAULT_ICONS[domainOf(e.entity)] || 'mdi:circle-outline';
   }
   private iconHtml(e: RoomEntity): string { const c = this.host.iconColor(e); return `<ha-icon icon="${esc(this.iconOf(e))}" aria-hidden="true"${c ? ` style="color:${esc(c)}"` : ''}></ha-icon>`; }
 
@@ -226,7 +235,9 @@ export class Tiles {
       const btn = (val: 'off' | 'on', label: string, ic: string) => `<button data-action="heat-source" data-value="${val}" data-entity="${esc(id)}" data-focus="hs-${esc(id)}-${val}" aria-pressed="${sel === (val === 'on')}" title="${esc(label)}" ${dd}>${ic ? icon(ic) : ''}${esc(label)}</button>`;
       html += `<div class="seg" role="group" aria-label="Heat source">${btn('off', hs.off, hs.off_icon)}${btn('on', hs.on, hs.on_icon)}</div>`;
     }
-    return `<div class="tile ${on ? 'on' : ''}">${head(power ? 'climate-power' : null, power)}${html ? `<div class="extra">${html}</div>` : ''}</div>`;
+    // three looks: off, on (idle: the setpoint is reached) and heating / cooling (hvac_action)
+    const act = climateAction(s);
+    return `<div class="tile ${on ? 'on' : ''}${act ? ` ${act}` : ''}">${head(power ? 'climate-power' : null, power)}${html ? `<div class="extra">${html}</div>` : ''}</div>`;
   }
   private heatSource(e: any): { entity: string; off: string; on: string; off_icon: string; on_icon: string } | null {
     const h = e.heat_source; if (!h) return null;
@@ -324,8 +335,10 @@ export class Tiles {
     if (d === 'light' && isOn(s) && num(a.brightness)) return `On · ${Math.round(a.brightness / 2.55)}%`;
     if (d === 'climate') {
       const mode = HVAC[s.state]?.[0] || titleCase(String(s.state).replace(/_/g, ' '));
-      const action = a.hvac_action && !['idle', 'off'].includes(a.hvac_action) && s.state !== 'off' ? ` · ${String(a.hvac_action).replace(/_/g, ' ')}` : '';
-      return `${mode}${action}${num(a.current_temperature) ? ` · ${a.current_temperature}° now` : ''}`;
+      // Heating / Cooling while it runs, the mode and "idle" while on and waiting, the mode alone when off
+      const act = climateAction(s), raw = String(a.hvac_action || '');
+      const head = act ? titleCase(act) : s.state !== 'off' && raw && raw !== 'off' ? `${mode} · ${raw.replace(/_/g, ' ')}` : mode;
+      return `${head}${num(a.current_temperature) ? ` · ${a.current_temperature}° now` : ''}`;
     }
     if (d === 'media_player' && isOn(s)) {
       const what = a.app_name || a.source || (s.state === 'playing' ? 'Playing' : s.state === 'paused' ? 'Paused' : 'On');

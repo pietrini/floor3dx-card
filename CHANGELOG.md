@@ -3,10 +3,17 @@
 ## Unreleased
 
 ### Fixed
+- Rooms Card: a pin's icons sat a couple of pixels low (the icon's line height pushed the glyph down); they are now centred in the pin.
 - Rooms Card: a selected room's pin was raised above the room's panel and showed through it where the pin sat under the panel; the pins now have their own layer, under the panel.
 - Rooms Card: with a pale accent (the `off` theme's is white) a selected pin's name and an on switch's knob were white on white; what is drawn on the accent is now dark on a pale accent and white on a dark one.
 
+### Changed
+- Rooms Card: "All off in this room" is now an icon-only power button in the room panel's header, left of the close button, instead of a footer button with text.
+
 ### Added
+- Rooms Card: `pin_state: yes` shows on each pin what the room is doing: a bulb while a light is on, a flame while a thermostat is heating, a snowflake while one is cooling.
+- Rooms Card: `hidden: yes` on a room entity leaves out its tile and readout but keeps it for `pin_info` and the subtitle (a temperature sensor whose reading a thermostat tile already shows, say).
+- Rooms Card: a thermostat tile shows when it is actually heating or cooling (its `hvac_action`), not only off or on: the tile turns orange (blue for cooling), its icon becomes a flame (a snowflake) unless the entity has an icon of its own, and the status reads "Heating · 21.8° now"; a thermostat that is on but waiting reads "Heat · idle".
 - Rooms Card: `room_light: simple` — a room with a light on is lit as a whole by one lamp at its centre, the same for every room (`room_light_lumens`, `room_light_color`), instead of the card's lamps with their own reach, brightness and colour; `room_light: glow` draws a flat glow instead. The card's lamps give no light then, and a tap on one still toggles it.
 - Rooms Card: `pin_on: no` keeps the plain pin colour for a room with something on.
 - Rooms Card: `thermostat_power: no` (or `power: no` on a climate entity) leaves the on/off switch off a thermostat tile; the setpoint and modes stay.
