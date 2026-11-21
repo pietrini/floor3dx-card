@@ -11,6 +11,7 @@ import { THEMES, RoomsTheme, themeOf, stageOfCard, rgb } from './themes';
 import { Room, RoomEntity, RoomIndex, suggestRooms, floorCandidates, slug } from './rooms';
 import { Tiles, TilesHost, CSS_TILES, isOn, esc, domainOf, titleCase, icon, ACTIVE_DOMAINS, OFFABLE } from './tiles';
 import { tokenRoles } from './references';
+import { lightIntensity } from '../render-mode';
 
 export const ROOMS_EDITOR_EVENT = 'floor3dx-rooms-editor';
 export const ROOMS_PREVIEW_EVENT = 'floor3dx-rooms-preview';
@@ -68,11 +69,12 @@ const STYLE = `
 .list button[aria-pressed=true]{background:rgba(var(--f3r-accent),.18);color:rgb(var(--f3r-accent))}
 .list .n{margin-left:auto;font-size:12px;color:var(--f3r-muted)}
 .list .group{padding:8px 10px 2px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--f3r-muted)}
-.pins{position:absolute;inset:0;pointer-events:none}
-.pin{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;height:30px;min-width:30px;padding:0 6px;border-radius:15px;border:1px solid var(--f3r-line);background:var(--f3r-panel);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--f3r-muted);font-size:12px;font-weight:500;white-space:nowrap;pointer-events:auto;opacity:.92;transition:opacity .2s}
+.pins{position:absolute;inset:0;pointer-events:none;z-index:0}
+.pin{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;min-height:30px;min-width:30px;padding:0 6px;border-radius:15px;border:1px solid var(--f3r-line);background:var(--f3r-panel);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--f3r-muted);font-size:12px;font-weight:500;white-space:nowrap;pointer-events:auto;opacity:.92;transition:opacity .2s}
 .pin ha-icon{width:17px;height:17px;--mdc-icon-size:17px}.pin .pn{display:none;padding-right:2px}
+.pin .pt{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}.pin.info{padding-top:3px;padding-bottom:3px}.pin .pi{font-size:11px;font-weight:400;opacity:.85;padding-right:2px}
 .pin.on{color:rgb(var(--f3r-on));border-color:rgba(var(--f3r-on),.5)}
-.pin[aria-pressed=true]{background:rgb(var(--f3r-accent));border-color:rgb(var(--f3r-accent));color:#fff;z-index:2}
+.pin[aria-pressed=true]{background:rgb(var(--f3r-accent));border-color:rgb(var(--f3r-accent));color:var(--f3r-on-accent,#fff);z-index:2}
 .pin[aria-pressed=true] .pn,.pin.hover .pn,:host(.labels) .pin .pn{display:inline}
 .pin[hidden]{display:none}
 .pin .count{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;border-radius:8px;background:rgb(var(--f3r-on));color:#1b1b1b;font-size:10px;line-height:16px;text-align:center;padding:0 4px;font-weight:600}
@@ -117,7 +119,7 @@ ${CSS_TILES}
 .hint{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:6px 12px;border-radius:12px;background:var(--f3r-panel);color:var(--f3r-muted);font-size:12px;pointer-events:none}
 `;
 
-interface Tint { mesh: THREE.Mesh; room: Room }
+interface Tint { mesh: THREE.Mesh; room: Room; glow?: 'floor' | 'veil' } // glow: room_light: simple's glow, not a tint
 /** One model of the card: its embedded floor3dx card, the rooms on it and their tints. */
 interface Slot {
   id: string;
@@ -130,6 +132,7 @@ interface Slot {
   el: any; // the floor3dx-card element
   index: RoomIndex | null;
   tints: Tint[];
+  lamps?: { light: THREE.PointLight; room: Room; intensity: number }[]; // room_light: simple, one per room
   home: { position: THREE.Vector3; target: THREE.Vector3 } | null;
   poll: any;
 }
@@ -437,6 +440,9 @@ export class Floor3dxRoomsCard extends HTMLElement {
     // the accent is the theme's line colour when it contrasts with the stage; otherwise plain
     const accent = t.accent || (Math.abs(lum(t.edges) - lum(stage)) > 0.3 ? t.edges : light ? '#1b2430' : '#eef2f7');
     this.style.setProperty('--f3r-accent', rgb(c.accent || accent));
+    // what is drawn on the accent (a selected pin's name, a switch's knob): dark on a pale accent - the
+    // `off` theme's accent is white - and white otherwise
+    this.style.setProperty('--f3r-on-accent', lum(hex6(c.accent) || accent) > 0.6 ? '#1b2430' : '#fff');
     const alpha = Number(this._config.panel_opacity);
     if (Number.isFinite(alpha) && alpha >= 0 && alpha <= 1) this.style.setProperty('--f3r-alpha', String(alpha)); else this.style.removeProperty('--f3r-alpha');
   }
@@ -458,6 +464,8 @@ export class Floor3dxRoomsCard extends HTMLElement {
     cfg.selectionMode = 'no';
     cfg.editModeNotifications = 'no';
     cfg.stencil = 'yes'; // the room tints use the stencil buffer
+    // room_light: simple - the rooms glow instead; the card's lamps stay (a tap still toggles them) but give no light
+    if (this._simpleLight()) (cfg.entities || []).forEach((e: any) => { if (e && e.type3d === 'light') { e.light = { ...(e.light || {}), lumens: '0', shadow: 'no' }; } });
     if (this._theme.look) {
       cfg.look = JSON.parse(JSON.stringify(this._theme.look));
       // no theme lines on the text and picture panels unless asked; `edge_skip` replaces the list
@@ -513,7 +521,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
   }
   private _dropSlot(s: Slot): void {
     clearInterval(s.poll);
-    s.tints.forEach((t) => { t.mesh.parent?.remove(t.mesh); (t.mesh.material as THREE.Material).dispose(); });
+    s.tints.forEach((t) => { t.mesh.parent?.remove(t.mesh); (t.mesh.material as THREE.Material).dispose(); }); (s.lamps || []).forEach((l) => { l.light.parent?.remove(l.light); l.light.dispose(); });
     s.host.remove();
   }
   private _listen(slot: Slot): void {
@@ -571,9 +579,11 @@ export class Floor3dxRoomsCard extends HTMLElement {
     const el = slot.el; if (!el || !el._scene) return;
     const scene: THREE.Scene = el._scene;
     slot.tints.forEach((t) => { t.mesh.parent?.remove(t.mesh); (t.mesh.material as THREE.Material).dispose(); });
+    (slot.lamps || []).forEach((l) => { l.light.parent?.remove(l.light); l.light.dispose(); }); slot.lamps = [];
     slot.tints = [];
     const rooms = this._slotRooms(slot);
     slot.index = new RoomIndex(scene, rooms);
+    if (this._roomLightMode() === 'simple') this._addLamps(slot, scene, rooms);
     for (const room of rooms) {
       for (const name of room.floors || []) {
         const floor = scene.getObjectByName(name);
@@ -593,10 +603,75 @@ export class Floor3dxRoomsCard extends HTMLElement {
           mesh.visible = false;
           scene.add(mesh);
           slot.tints.push({ mesh, room });
+          if (this._roomLightMode() === 'glow') this._addGlow(slot, scene, room, m);
         });
       }
     }
     this._paintTints();
+  }
+  /** room_light: simple - a room with a light on glows as a whole, in one warm colour, whatever the lamps'
+   *  number, place, brightness or colour: its floor lit, and a veil over the room at the height of its walls. */
+  private _roomLightMode(): '' | 'simple' | 'glow' { const v = String(this._config?.room_light ?? '').toLowerCase(); return v === 'simple' || v === 'glow' ? v : ''; }
+  private _simpleLight(): boolean { return this._roomLightMode() !== ''; }
+  private _lightOn(room: Room): boolean { return (room.entities || []).some((e) => domainOf(e.entity) === 'light' && isOn(this._s(e.entity))); }
+  private _addGlow(slot: Slot, scene: THREE.Scene, room: Room, floor: THREE.Mesh): void {
+    const top = this._roomTop(room, scene);
+    const box = new THREE.Box3().setFromObject(floor);
+    for (const kind of ['floor', 'veil'] as const) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      const mesh = new THREE.Mesh(floor.geometry, mat);
+      mesh.name = 'f3dx_rooms_glow';
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(floor.matrixWorld);
+      // the veil: the floor's outline lifted to the top of the room's walls (just under it, so the wall tops stay crisp)
+      if (kind === 'veil') { if (top === null) continue; mesh.matrix.premultiply(new THREE.Matrix4().makeTranslation(0, (top - box.max.y) * 0.98, 0)); }
+      mesh.renderOrder = 49;
+      mesh.layers.mask = floor.layers.mask;
+      mesh.visible = false;
+      scene.add(mesh);
+      slot.tints.push({ mesh, room, glow: kind });
+    }
+  }
+  /** room_light: simple - one point light per room, at its centre just under the top of its walls, reaching
+   *  a little past its corners: the room lit as a whole, the light fading towards its walls as a lamp's does.
+   *  Always in the scene (off = intensity 0), so switching never changes the shaders. */
+  private _addLamps(slot: Slot, scene: THREE.Scene, rooms: Room[]): void {
+    slot.lamps = [];
+    const own = this._config.room_light_color;
+    const color = new THREE.Color(typeof own === 'string' && /^#[0-9a-f]{6}$/i.test(own.trim()) ? own.trim() : '#ffd9a0');
+    const lumens = Number(this._config.room_light_lumens) > 0 ? Number(this._config.room_light_lumens) : 1200;
+    for (const room of rooms) {
+      const box = new THREE.Box3();
+      (room.floors || []).forEach((f) => { const o = scene.getObjectByName(f); if (o) box.expandByObject(o); });
+      if (box.isEmpty()) continue;
+      const top = this._roomTop(room, scene) ?? box.max.y + Math.max(box.max.x - box.min.x, box.max.z - box.min.z) / 3;
+      const c = box.getCenter(new THREE.Vector3());
+      const half = Math.hypot(box.max.x - box.min.x, box.max.z - box.min.z) / 2;
+      const reach = half * 1.5, decay = 2;
+      const light = new THREE.PointLight(color, 0, reach, decay);
+      light.name = 'f3dx_rooms_lamp';
+      light.castShadow = false;
+      light.position.set(c.x, box.max.y + (top - box.max.y) * 0.9, c.z);
+      scene.add(light);
+      slot.lamps.push({ light, room, intensity: lightIntensity(lumens, 1, slot.card || {}, reach, decay) });
+    }
+  }
+  private _paintLamps(slot: Slot): boolean {
+    let changed = false;
+    for (const l of slot.lamps || []) { const v = this._lightOn(l.room) ? l.intensity : 0; if (l.light.intensity !== v) { l.light.intensity = v; changed = true; } }
+    return changed;
+  }
+  private _paintGlows(slot: Slot): boolean {
+    const own = this._config.room_light_color;
+    const color = new THREE.Color(typeof own === 'string' && /^#[0-9a-f]{6}$/i.test(own.trim()) ? own.trim() : '#ffc46b');
+    let changed = false;
+    for (const t of slot.tints) {
+      if (!t.glow) continue;
+      const mat = t.mesh.material as THREE.MeshBasicMaterial;
+      const visible = this._lightOn(t.room), opacity = t.glow === 'floor' ? 0.55 : 0.16;
+      if (t.mesh.visible !== visible || mat.opacity !== opacity || !mat.color.equals(color)) { t.mesh.visible = visible; mat.opacity = opacity; mat.color.copy(color); changed = true; }
+    }
+    return changed;
   }
   private _paintTints(): void {
     const on = new Set((this._config.rooms as Room[]).filter((r) => this._activeCount(r)).map((r) => r.id));
@@ -605,9 +680,11 @@ export class Floor3dxRoomsCard extends HTMLElement {
     const roomColors = this._config.room_colors === true || this._config.room_colors === 'yes';
     const tintOn = this._config.tint_on === true || this._config.tint_on === 'yes'; // the lamps show it themselves
     for (const slot of this._slots) {
-      if (!slot.tints.length) continue;
-      let changed = false;
+      let changed = this._paintLamps(slot);
+      if (!slot.tints.length) { if (changed) slot.el?._requestRender?.('rooms'); continue; }
+      changed = this._paintGlows(slot) || changed;
       for (const t of slot.tints) {
+        if (t.glow) continue;
         const mat = t.mesh.material as THREE.MeshBasicMaterial;
         let visible = false, opacity = 0, color: THREE.Color | null = null;
         if (t.room.id === this._room) { visible = true; opacity = 0.5; color = accent; }
@@ -792,7 +869,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
       const slot = this._slotOf(room), el = slot?.el;
       if (!room || !slot || !el || !el._camera || !el._renderer || !slot.index || slot.host.hidden) { pin.hidden = true; continue; }
       const rect = (el._renderer.domElement as HTMLCanvasElement).getBoundingClientRect();
-      const c = slot.index.centre(room, el._scene);
+      const c = this._pinAnchor(room, slot.index, el._scene);
       if (!c || !rect.width) { pin.hidden = true; continue; }
       const cam: THREE.Camera = el._camera;
       cam.updateMatrixWorld();
@@ -803,6 +880,62 @@ export class Floor3dxRoomsCard extends HTMLElement {
       pin.style.left = `${rect.left - host.left + ((v.x + 1) / 2) * rect.width}px`;
       pin.style.top = `${rect.top - host.top + ((1 - v.y) / 2) * rect.height}px`;
     }
+    const spread = this._config.pin_spread;
+    if (spread !== false && String(spread ?? 'yes').toLowerCase() !== 'no') this._spreadPins(layer);
+  }
+  /** Where a room's pin stands in the scene: the centre of its floors, at floor height (`pin_position:
+   *  floor`, the default) or at the room's top (`top`): the highest point of what stands over its floors
+   *  (walls, ceilings), so the pin sits on the room as it is drawn rather than on the floor inside it. */
+  private _anchors = new WeakMap<THREE.Object3D, Map<string, number | null>>();
+  private _pinAnchor(room: Room, index: any, scene: THREE.Object3D): THREE.Vector3 | null {
+    const c = index.centre(room, scene);
+    if (!c || String(this._config.pin_position ?? 'floor').toLowerCase() !== 'top') return c;
+    const top = this._roomTop(room, scene);
+    return top === null ? c : new THREE.Vector3(c.x, top, c.z);
+  }
+  /** The top of a room: the highest point of what stands over its floors (walls, ceilings), or null. */
+  private _roomTop(room: Room, scene: THREE.Object3D): number | null {
+    let cache = this._anchors.get(scene);
+    if (!cache) { cache = new Map(); this._anchors.set(scene, cache); }
+    const key = (room.floors || []).join('|');
+    if (!cache.has(key)) {
+      const floor = new THREE.Box3();
+      (room.floors || []).forEach((f) => { const o = scene.getObjectByName(f); if (o) floor.expandByObject(o); });
+      let top = -Infinity;
+      const b = new THREE.Box3();
+      scene.traverse((o: any) => {
+        if (!o.isMesh || !o.visible || (room.floors || []).includes(o.name)) return;
+        b.setFromObject(o);
+        // overlaps the floors in plan, and stands on them (not a level below)
+        if (b.max.x <= floor.min.x || b.min.x >= floor.max.x || b.max.z <= floor.min.z || b.min.z >= floor.max.z) return;
+        // (rises above the floor and starts near it, relative to its own height: not the next level up)
+        if (b.max.y <= floor.max.y || b.min.y > floor.max.y + 0.25 * (b.max.y - b.min.y)) return;
+        top = Math.max(top, b.max.y);
+      });
+      cache.set(key, Number.isFinite(top) ? top : null);
+    }
+    return cache.get(key) ?? null;
+  }
+  /** Pins that cover each other are pushed apart, each along the axis that needs the least movement,
+   *  a few rounds until none overlap (or the rounds run out); a pin keeps its place when it is clear. */
+  private _spreadPins(layer: HTMLElement): void {
+    const pins = (Array.from(layer.children) as HTMLElement[]).filter((p) => !p.hidden && p.offsetWidth);
+    if (pins.length < 2) return;
+    const gap = 3;
+    const box = pins.map((p) => ({ p, x: parseFloat(p.style.left), y: parseFloat(p.style.top), w: p.offsetWidth + gap, h: p.offsetHeight + gap }));
+    for (let round = 0; round < 12; round++) {
+      let moved = false;
+      for (let i = 0; i < box.length; i++) for (let j = i + 1; j < box.length; j++) {
+        const a = box[i], b = box[j];
+        const ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy = (a.h + b.h) / 2 - Math.abs(a.y - b.y);
+        if (ox <= 0 || oy <= 0) continue;
+        moved = true;
+        if (oy <= ox) { const d = (oy / 2) * (a.y <= b.y ? 1 : -1); a.y -= d; b.y += d; }
+        else { const d = (ox / 2) * (a.x <= b.x ? 1 : -1); a.x -= d; b.x += d; }
+      }
+      if (!moved) break;
+    }
+    box.forEach((b) => { b.p.style.left = `${b.x}px`; b.p.style.top = `${b.y}px`; });
   }
 
   // ---- taps and hover --------------------------------------------------------------------
@@ -1002,7 +1135,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
     const names = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
     return names[Math.round(((deg + 360) % 360) / 45) % 8];
   }
-  private _roomEntities(): string[] { return (this._config?.rooms || []).flatMap((r: Room) => (r.entities || []).flatMap((e: any) => [e.entity, e.top_entity, e.dimmer, e.remote, typeof e.heat_source === 'string' ? e.heat_source : e.heat_source?.entity, this._config.guest_mode_entity].filter(Boolean))); }
+  private _roomEntities(): string[] { return (this._config?.rooms || []).flatMap((r: Room) => (r.entities || []).flatMap((e: any) => [e.entity, e.top_entity, e.dimmer, e.remote, typeof e.heat_source === 'string' ? e.heat_source : e.heat_source?.entity, this._config.guest_mode_entity].filter(Boolean)).concat(this._pinEntity(r) || [])); }
   /** room_summary (2.19.2): `basic` (the count and the doors, as before) or `full` - the card's setting, a room's own `summary` overriding it. */
   private _summaryMode(room: Room): 'basic' | 'full' {
     const v = String(room.summary ?? this._config.room_summary ?? 'basic').toLowerCase();
@@ -1042,6 +1175,30 @@ export class Floor3dxRoomsCard extends HTMLElement {
   }
   private _activeCount(room: Room): number { return (room.entities || []).filter((e) => ACTIVE_DOMAINS.has(domainOf(e.entity)) && isOn(this._s(e.entity))).length; }
   private _roomName(r: Room): string { return titleCase(r.name || r.id); }
+  /** pin_info: what the pin shows under the room's name - the card's setting, a room's own overriding
+   *  it (`no` for none). An entity id, a Jinja template, or a device class (`temperature`, `humidity`):
+   *  the room's first entity of that class. */
+  private _pinSetting(r: Room): string {
+    const v = r.pin_info ?? this._config?.pin_info;
+    return v === undefined || v === null || v === false || String(v).toLowerCase() === 'no' ? '' : String(v).trim();
+  }
+  private _pinEntity(r: Room): string | undefined {
+    const v = this._pinSetting(r);
+    if (!v || isTemplate(v)) return undefined;
+    if (v.includes('.')) return v;
+    return (r.entities || []).map((e) => e.entity).find((id) => !isTemplate(id) && this._s(id)?.attributes?.device_class === v);
+  }
+  private _pinInfo(r: Room): string {
+    const v = this._pinSetting(r);
+    if (!v) return '';
+    if (isTemplate(v)) { const t = this._templates.get(v); return t && !t.error && t.text !== '…' ? t.text.trim() : ''; }
+    const id = this._pinEntity(r), st = id ? this._s(id) : undefined;
+    if (!st || st.state === 'unavailable' || st.state === 'unknown') return '';
+    // the frontend's own formatting: the entity's display precision and unit, in the user's locale
+    try { if (typeof this._hass?.formatEntityState === 'function') return String(this._hass.formatEntityState(st)); } catch (_) { /* older frontend */ }
+    const u = st.attributes?.unit_of_measurement;
+    return u ? `${st.state}${String(u).startsWith('°') || u === '%' ? '' : ' '}${u}` : String(st.state);
+  }
   /** Subscribe to Home Assistant's rendering of every template readout in the configuration (and drop
    *  the ones no longer there). HA pushes a new result whenever an entity the template reads changes. */
   private _syncTemplates(): void {
@@ -1052,7 +1209,8 @@ export class Floor3dxRoomsCard extends HTMLElement {
     (this._config.rooms || []).forEach((r: Room) => (r.entities || []).forEach(want));
     // the card's title, icon and subtitle (2.18): templates, or a list of readouts
     const c = this._config; for (const k of ['title', 'icon', 'icon_color']) if (isTemplate(c[k])) wanted.add(c[k]);
-    (this._config.rooms || []).forEach((r: Room) => { if (isTemplate((r as any).description)) wanted.add((r as any).description); });
+    (this._config.rooms || []).forEach((r: Room) => { for (const v of [(r as any).description, r.pin_info]) if (isTemplate(v)) wanted.add(v); });
+    if (isTemplate(c.pin_info)) wanted.add(c.pin_info);
     if (isTemplate(c.subtitle)) wanted.add(c.subtitle); else if (Array.isArray(c.subtitle)) c.subtitle.forEach(want);
     this._templates.forEach((t, template) => { if (!wanted.has(template)) { this._templates.delete(template); this._unsubTemplate(t); } });
     wanted.forEach((template) => {
@@ -1211,7 +1369,11 @@ export class Floor3dxRoomsCard extends HTMLElement {
       : this._dlMenu ? this._daylightMenu()
       : this._camMenu ? this._cameraMenu()
       : this._viewsOpen && views ? `<div class="list" role="menu"><button data-action="reset">${icon('mdi:camera-flip-outline')}<span>Reset view</span></button>${views.views.map((v, i) => `<button data-action="view" data-i="${i}">${icon('mdi:magnify-expand')}<span>${esc(String(v.name || `View ${i + 1}`))}</span></button>`).join('')}</div>` : '';
-    const pins = c.pins !== false && c.pins !== 'no' ? `<div class="pins">${rooms.filter((r) => (r.floors || []).length).map((r) => { const n = this._activeCount(r); return `<button class="pin ${n ? 'on' : ''} ${r.id === this._hover ? 'hover' : ''}" hidden data-action="room" data-room="${esc(r.id)}" aria-pressed="${r.id === this._room}" aria-label="${esc(this._roomName(r))}${n ? `, ${n} on` : ''}">${icon(r.icon || 'mdi:door-open')}<span class="pn">${esc(this._roomName(r))}</span>${n ? `<span class="count" aria-hidden="true">${n}</span>` : ''}</button>`; }).join('')}</div>` : '';
+    // pin_count: no - no badge with the number of things on in the room
+    const showCount = c.pin_count !== false && String(c.pin_count ?? 'yes').toLowerCase() !== 'no';
+    // pin_on: no - a room with something on keeps the plain pin colour
+    const showOn = c.pin_on !== false && String(c.pin_on ?? 'yes').toLowerCase() !== 'no';
+    const pins = c.pins !== false && c.pins !== 'no' ? `<div class="pins">${rooms.filter((r) => (r.floors || []).length).map((r) => { const n = this._activeCount(r), info = this._pinInfo(r); return `<button class="pin ${n && showOn ? 'on' : ''} ${info ? 'info' : ''} ${r.id === this._hover ? 'hover' : ''}" hidden data-action="room" data-room="${esc(r.id)}" aria-pressed="${r.id === this._room}" aria-label="${esc(this._roomName(r))}${info ? `, ${esc(info)}` : ''}${n ? `, ${n} on` : ''}">${icon(r.icon || 'mdi:door-open')}<span class="pt"><span class="pn">${esc(this._roomName(r))}</span>${info ? `<span class="pi">${esc(info)}</span>` : ''}</span>${n && showCount ? `<span class="count" aria-hidden="true">${n}</span>` : ''}</button>`; }).join('')}</div>` : '';
     const panel = room ? this._panel(room) : '';
     if (!room) this._lastPanelRoom = null;
     this.classList.toggle('open', !!room);

@@ -54,7 +54,7 @@ export const CSS_TILES = `
 .row{display:flex;align-items:center;gap:10px;width:100%;min-height:60px;padding:10px 12px;border:0;background:transparent;text-align:left}
 .ticon{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:10px;background:rgba(127,127,127,.14);color:var(--f3r-muted)}.tile.on .ticon{color:rgb(var(--f3r-on));background:rgba(var(--f3r-on),.14)}
 .ttext{flex:1;min-width:0}.tname{display:block;font-size:14px;font-weight:500;line-height:1.3;overflow-wrap:anywhere}.tstate{display:block;color:var(--f3r-muted);font-size:12px;margin-top:2px}.tstate.warn{color:#e57373}
-.sw{flex:none;width:28px;height:17px;border-radius:10px;background:rgba(127,127,127,.3);padding:3px}.sw:before{content:"";display:block;width:11px;height:11px;border-radius:50%;background:var(--f3r-ink)}.tile.on .sw{background:rgb(var(--f3r-accent))}.tile.on .sw:before{margin-left:11px;background:#fff}
+.sw{flex:none;width:28px;height:17px;border-radius:10px;background:rgba(127,127,127,.3);padding:3px}.sw:before{content:"";display:block;width:11px;height:11px;border-radius:50%;background:var(--f3r-ink)}.tile.on .sw{background:rgb(var(--f3r-accent))}.tile.on .sw:before{margin-left:11px;background:var(--f3r-on-accent,#fff)}
 .extra{padding:0 12px 10px}.ctl{margin-top:2px}.ctl-l{display:block;font-size:11px;color:var(--f3r-muted);margin:2px 0 -2px}
 .range{display:block;width:100%;height:28px;margin:0;accent-color:rgb(var(--f3r-accent));touch-action:pan-x}.range.warmth{accent-color:#e9a65a}
 .range.hue{-webkit-appearance:none;appearance:none;height:28px;background:transparent;--hue:0}.range.hue::-webkit-slider-runnable-track{height:14px;border-radius:7px;background:linear-gradient(to right,hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))}.range.hue::-moz-range-track{height:14px;border-radius:7px;background:linear-gradient(to right,hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))}.range.hue::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:22px;height:22px;margin-top:-4px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);background:hsl(var(--hue),100%,50%)}.range.hue::-moz-range-thumb{width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);background:hsl(var(--hue),100%,50%)}
@@ -188,7 +188,9 @@ export class Tiles {
   private climateTile(e: any, s: any, a: any, on: boolean, head: (action: string | null, sw?: boolean) => string, dis: string): string {
     const id = e.entity, level = this.thermoLevel();
     if (on) this.lastHvac.set(id, s.state);
-    const power = level === 'full' || level === 'setpoint_power';
+    // thermostat_power: no (card) / power: no (entity) - no on/off switch on the tile; the setpoint and modes stay
+    const pw = e.power ?? this.host.config.thermostat_power;
+    const power = (level === 'full' || level === 'setpoint_power') && pw !== false && String(pw ?? 'yes').toLowerCase() !== 'no';
     const step = this.tempStep(a), [lo, hi] = this.tempLimits(a), gap = this.gap(a);
     const fmt = (t: number) => `${Math.round(Number(t) * 10) / 10}°`;
     const stepper = (which: string, t: number, minus: boolean, plus: boolean, label: string) => `<div class="temp"><button class="step" data-action="temp" data-which="${which}" data-entity="${esc(id)}" data-value="${-step}" data-focus="tm${which}-${esc(id)}" ${dis || (minus ? '' : 'disabled')} aria-label="Lower ${label}">−</button><span class="val">${fmt(t)}</span><button class="step" data-action="temp" data-which="${which}" data-entity="${esc(id)}" data-value="${step}" data-focus="tp${which}-${esc(id)}" ${dis || (plus ? '' : 'disabled')} aria-label="Raise ${label}">+</button></div>`;

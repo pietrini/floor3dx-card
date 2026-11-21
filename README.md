@@ -635,6 +635,13 @@ rooms:
 | `panel_lines` | `yes`: the theme's lines are drawn on text and picture panels too (2.4.2) | `no` |
 | `edge_skip` | the look's `edge_skip` list, replacing the default | `seams, floors, ceilings, texts, images` |
 | `labels` | `yes`: pins always show the room's name | `no` |
+| `room_light` | `simple`: a room with a light on (any `light.` entity of the room) is lit as a whole by one lamp at its centre, just under the top of its walls, reaching a little past its corners — the same for every room, whatever its lamps' number, place, brightness or colour; `room_light_lumens` (1200) and `room_light_color` (`#ffd9a0`) set it. `glow`: the room glows flat instead (its floor, and a veil at the height of its walls). With either, the card's own lamps (`type3d: light`) give no light; a tap on one still toggles it | the card's lamps |
+| `pin_on` | `no`: a room with something on keeps the plain pin colour (no amber pin) | `yes` |
+| `thermostat_power` | `no`: thermostat tiles have no on/off switch, only the setpoint and modes; `power: no` on a climate entity does the same for that one (`yes` gives it back) | `yes` |
+| `pin_count` | `no`: no badge on a pin with the number of things on in the room (the pin keeps its 'on' colour) | `yes` |
+| `pin_position` | `top`: a pin stands at the room's top — the height of the walls around its floors — rather than on the floor, so it sits on the room as it is drawn | `floor` |
+| `pin_spread` | `no`: pins stay exactly over their rooms even when they cover each other; by default overlapping pins are pushed apart, each the least distance | `yes` |
+| `pin_info`, `rooms[].pin_info` | a second line under the pin's name: a device class (`temperature`, `humidity`: the room's first entity of that class), an entity id, or a Jinja template; a room's own setting overrides the card's, `no` for none. Formatted as Home Assistant shows the entity (its display precision and unit) | none |
 | `room_colors` | `yes`: every room's floor in its own pastel tint | `no` |
 | `panel_opacity` | 0.2 to 0.95: how opaque the overlay panels are over the model (slider in the editor) | 0.55 (0.6 on a light stage) |
 | `tint_on` | `yes`: rooms with something on get an amber floor tint (the lamps show it themselves) | `no` |

@@ -14,6 +14,7 @@ export interface Room {
   name?: string;
   icon?: string;
   description?: string;
+  pin_info?: string; // the pin's second line: an entity id, a template, or a device class (temperature)
   color?: string;
   floors?: string[]; // object names
   entities?: RoomEntity[];

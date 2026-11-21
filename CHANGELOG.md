@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+- Rooms Card: a selected room's pin was raised above the room's panel and showed through it where the pin sat under the panel; the pins now have their own layer, under the panel.
+- Rooms Card: with a pale accent (the `off` theme's is white) a selected pin's name and an on switch's knob were white on white; what is drawn on the accent is now dark on a pale accent and white on a dark one.
+
+### Added
+- Rooms Card: `room_light: simple` — a room with a light on is lit as a whole by one lamp at its centre, the same for every room (`room_light_lumens`, `room_light_color`), instead of the card's lamps with their own reach, brightness and colour; `room_light: glow` draws a flat glow instead. The card's lamps give no light then, and a tap on one still toggles it.
+- Rooms Card: `pin_on: no` keeps the plain pin colour for a room with something on.
+- Rooms Card: `thermostat_power: no` (or `power: no` on a climate entity) leaves the on/off switch off a thermostat tile; the setpoint and modes stay.
+- Rooms Card: `pin_count: no` hides the badge on a pin that counts the things on in the room.
+- Rooms Card: `pin_position: top` stands each room's pin at the top of the room (the height of the walls around its floors) instead of on the floor.
+- Rooms Card: pins that cover each other are pushed apart, each the least distance (`pin_spread: no` keeps them exactly over their rooms).
+- Rooms Card: `pin_info` — a second line under each room's pin: a device class (`pin_info: temperature` shows the room's first temperature sensor), an entity id or a Jinja template; `rooms[].pin_info` overrides it per room (`no` for none). The value follows the entity live and is formatted as Home Assistant shows it.
+
 ### Security
 - `entity_template` (`[[[ … ]]]`) no longer pastes the entity's state into the code before running it. A state containing a quote and some JavaScript - from an `input_text` any user can edit, an MQTT topic, a media title - ran as code in the dashboard with the viewer's session (its stored tokens, every service). `$entity` is now a variable: inside a string it is the state as text, elsewhere the number for a numeric state, the text otherwise, so templates that worked give the same results. Unit tests: `entity-template.test.ts`, hostile states included.
 
