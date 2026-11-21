@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- `entity_template` (`[[[ … ]]]`) no longer pastes the entity's state into the code before running it. A state containing a quote and some JavaScript - from an `input_text` any user can edit, an MQTT topic, a media title - ran as code in the dashboard with the viewer's session (its stored tokens, every service). `$entity` is now a variable: inside a string it is the state as text, elsewhere the number for a numeric state, the text otherwise, so templates that worked give the same results. Unit tests: `entity-template.test.ts`, hostile states included.
+
 ## 2.19.5
 
 ### Added

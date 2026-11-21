@@ -46,6 +46,7 @@ import { RoomLight, installRoomLight, roomLightUniforms } from './room-light';
 installRoomLight();
 (window as any).__f3dxRoomLight = roomLightUniforms();
 import { mergeStatic, reservedNames } from './merge-static';
+import { runEntityTemplate } from './entity-template';
 import { Object3D } from 'three';
 import '../elements/button';
 import './rooms/index'; // floor3dx-rooms-card, registered beside this card
@@ -326,7 +327,6 @@ export class Floor3dCard extends LitElement {
   private _overlay_entity: string;
   private _overlay_state: string;
 
-  private _eval: Function;
   private _firstcall?: boolean;
   private _resizeTimeout?: number;
   private _resizeObserver: ResizeObserver;
@@ -448,7 +448,6 @@ export class Floor3dCard extends LitElement {
       this._requestRender('controls');
     };
     this._haShadowRoot = document.querySelector('home-assistant').shadowRoot;
-    this._eval = eval;
     this._card_id = 'ha-card-1';
 
     console.log('New Card');
@@ -1622,8 +1621,8 @@ export class Floor3dCard extends LitElement {
         const trimmed = entity.entity_template.trim();
 
         if (trimmed.substring(0, 3) === '[[[' && trimmed.slice(-3) === ']]]' && trimmed.includes('$entity')) {
-          const normal = trimmed.slice(3, -3).replace(/\$entity/g, state);
-          state = this._eval(normal);
+          // the state is passed to the code as a variable, never pasted into it (see entity-template.ts)
+          state = runEntityTemplate(trimmed.slice(3, -3), state);
         }
       }
       return state;
