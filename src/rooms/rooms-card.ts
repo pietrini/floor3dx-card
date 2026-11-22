@@ -114,6 +114,8 @@ const STYLE = `
 .readoutbox:not(.open) .readouts.more,.readoutbox:not(.open) .rule{display:none}.readoutbox:not(.open) .readouts{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .tiles{display:grid;grid-template-columns:1fr;gap:8px;padding:4px 12px 12px;flex:none;min-height:0;align-content:start;grid-auto-rows:max-content}
 :host(.narrow) .tiles{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+/* staggered (masonry) once two columns fit: 1 px rows, each tile spans its own height plus the gap (_stagger); one column (a phone, the side panel) keeps the plain list */
+.tiles.stagger{grid-auto-rows:1px;row-gap:0;align-items:start;padding-bottom:4px}.tiles.stagger > *{margin-bottom:8px}
 .tile.focus{box-shadow:0 0 0 2px rgb(var(--f3r-accent));transition:box-shadow .3s}
 ${CSS_TILES}
 .empty{padding:14px;color:var(--f3r-muted);font-size:13px;line-height:1.5}
@@ -214,6 +216,8 @@ export class Floor3dxRoomsCard extends HTMLElement {
   private _pinUntil = 0;
   private _flight = 0;
   private _ro: ResizeObserver | null = null;
+  private _tileRo: ResizeObserver | null = null; // the room panel's tiles, for the staggered grid
+  private _tilesEl: HTMLElement | null = null;
   private _root: ShadowRoot;
   private _ui!: HTMLElement;
   private _modelsHost!: HTMLElement;
@@ -260,6 +264,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
     this._ui.addEventListener('pointercancel', () => { clearTimeout(this._dlPress); this._dlLong = false; this._release(); });
     this._ui.addEventListener('pointerleave', () => clearTimeout(this._dlPress));
     this._ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { this._layout(); this._movePins(0); }) : null;
+    this._tileRo = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this._stagger()) : null;
     const card = this;
     const host: TilesHost = {
       get hass() { return card._hass; },
@@ -342,6 +347,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
   }
   disconnectedCallback(): void {
     this._ro?.disconnect();
+    this._tileRo?.disconnect(); this._tilesEl = null;
     // Home Assistant detaches and re-attaches a card freely (edit mode, the preview, a view change).
     // Unsubscribing at once races the server's first render event: the event then reaches the websocket
     // library for a subscription it has forgotten, and its own unsubscribe of it rejects unhandled
@@ -1399,6 +1405,7 @@ export class Floor3dxRoomsCard extends HTMLElement {
     this._region('panelhost', panel);
     this._region('notes', `${hint}${this._toast ? `<div class="toast" role="status">${esc(this._toast)}</div>` : ''}`);
     if (focus) (this._root.querySelector(`[data-focus="${CSS.escape(focus)}"]`) as HTMLElement | null)?.focus({ preventScroll: true });
+    this._stagger();
     const body = this._ui.querySelector('.body') as HTMLElement | null; if (body) body.scrollTop = scroll; const tiles = this._ui.querySelector('.tiles') as HTMLElement | null;
     if (this._focus && tiles) {
       const t = (tiles.querySelector(`[data-entity="${CSS.escape(this._focus)}"]`) as HTMLElement | null)?.closest('.tile') as HTMLElement | null;
@@ -1407,6 +1414,24 @@ export class Floor3dxRoomsCard extends HTMLElement {
     this._placePins();
     this._turnNeedle();
     if (this._slots[0]) this._syncCanvas(this._slots[0]);
+  }
+  /** The device tiles as a staggered grid: where two or more columns fit (a narrow card wider than a
+   *  phone), each tile spans as many 1 px rows as it is tall, so a short tile moves up under a short one
+   *  instead of leaving the gap a row of equal heights would. One column keeps the plain list. Run after
+   *  each render and whenever a tile changes size (a control opens, the panel is resized). */
+  private _stagger(): void {
+    const tiles = this._ui.querySelector('.tiles') as HTMLElement | null;
+    if (tiles !== this._tilesEl) {
+      this._tileRo?.disconnect(); this._tilesEl = tiles;
+      if (tiles && this._tileRo) for (const t of Array.from(tiles.children)) this._tileRo.observe(t, { box: 'border-box' });
+    }
+    if (!tiles) return;
+    const items = Array.from(tiles.children) as HTMLElement[];
+    const cols = getComputedStyle(tiles).gridTemplateColumns.split(' ').filter((v) => v && v !== 'none').length;
+    const on = cols > 1 && items.length > 1;
+    tiles.classList.toggle('stagger', on); // first: unstaggered, a tile is stretched to its row's height
+    const spans = items.map((t) => (on ? `span ${Math.max(1, Math.ceil(t.getBoundingClientRect().height) + 8)}` : ''));
+    items.forEach((t, i) => { if (t.style.gridRowEnd !== spans[i]) t.style.gridRowEnd = spans[i]; });
   }
   private _regions = new Map<string, { el: HTMLElement; html: string }>();
   private _region(name: string, html: string): void {

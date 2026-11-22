@@ -9,6 +9,7 @@
 
 ### Changed
 - Rooms Card: "All off in this room" is now an icon-only power button in the room panel's header, left of the close button, instead of a footer button with text.
+- Rooms Card: the room panel's device tiles form a staggered (masonry) grid wherever two or more columns fit (a narrow card wider than a phone): a short tile moves up under the one above it instead of leaving the gap that a row of equal-height tiles left beside a light with its controls. One column, on a phone or in a wide card's side panel, keeps the plain list. Harness: test_tiles_stagger.py (9)
 
 ### Added
 - Rooms Card: `pin_state: yes` shows on each pin what the room is doing: a bulb while a light is on, a flame while a thermostat is heating, a snowflake while one is cooling.
